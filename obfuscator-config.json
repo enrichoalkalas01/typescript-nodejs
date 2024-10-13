@@ -1,0 +1,9 @@
+{
+    "compact": true,
+    "controlFlowFlattening": true,
+    "deadCodeInjection": true,
+    "debugProtection": true,
+    "disableConsoleOutput": true,
+    "identifierNamesGenerator": "hexadecimal",
+    "selfDefending": true
+}
