@@ -4,7 +4,7 @@ import { validate } from "../middlewares/validate.js"
 import { RestaurantSchema, type Restaurant } from "../schema/restaurants.js"
 import { initializeRedisClient } from "../utils/client.js"
 import { nanoid } from "nanoid"
-import { restaurantKeyById, reviewDetailsKeyById, reviewKeyById } from "../utils/keys.js"
+import { cuisineKey, cuisinesKey, restaurantCuisinesKeyById, restaurantKeyById, reviewDetailsKeyById, reviewKeyById } from "../utils/keys.js"
 import { errorResponse, successResponse } from "../utils/responses.js"
 import { checkRestaurantExists } from "../middlewares/checkRestaurantId.js"
 import { ReviewSchema, type Review } from "../schema/review.js"
@@ -20,11 +20,36 @@ routes.post("/", validate(RestaurantSchema),  async (req, res, next) => {
         const restaurantKey = restaurantKeyById(id)
 
         const hashData = { id, name: data.name, location: data.location }
-        const addResult = await client.hSet(restaurantKey, hashData)
+        const addResult = await Promise.all([
+            ...data.cuisines.map(cuisine => Promise.all([
+                client.sAdd(cuisinesKey, cuisine),
+                client.sAdd(cuisineKey(cuisine), id),
+                client.sAdd(restaurantCuisinesKeyById(id), cuisine)
+            ])),
+            client.hSet(restaurantKey, hashData)
+        ])
 
         console.log(`Added ${addResult} field`)
         
         successResponse({ res: res, data: hashData, message: "Added new restaurant"})
+    } catch (error) {
+        next(error)
+    }
+})
+
+routes.get("/:restaurantId", [checkRestaurantExists], async (req: Request<{ restaurantId: string }>, res: any, next: any) => {
+    const { restaurantId } = req.params
+
+    try {
+        const client = await initializeRedisClient()
+        const restaurantKey = restaurantKeyById(restaurantId)
+        const [viewCount, restaurant, cuisines] = await Promise.all([
+            client.hIncrBy(restaurantKey, "viewCount", 1), // Each hit api, view increased
+            client.hGetAll(restaurantKey),
+            client.sMembers(restaurantCuisinesKeyById(restaurantId)),
+        ])
+
+        successResponse({ res: res, data: { ...restaurant, cuisines } })
     } catch (error) {
         next(error)
     }
@@ -47,24 +72,6 @@ routes.post("/:restaurantId/reviews", [checkRestaurantExists, validate(ReviewSch
         ])
 
         successResponse({ res: res, data: reviewData, message: "Review added"})
-    } catch (error) {
-        next(error)
-    }
-})
-
-routes.get("/:restaurantId", [checkRestaurantExists], async (req: Request<{ restaurantId: string }>, res: any, next: any) => {
-    const { restaurantId } = req.params
-
-    try {
-        const client = await initializeRedisClient()
-        const restaurantKey = restaurantKeyById(restaurantId)
-        const [viewCount, restaurant] = await Promise.all([
-            client.hIncrBy(restaurantKey, "viewCount", 1), // Each hit api, view increased
-            client.hGetAll(restaurantKey)
-        ])
-
-        console.log(viewCount)
-        successResponse({ res: res, data: restaurant })
     } catch (error) {
         next(error)
     }
