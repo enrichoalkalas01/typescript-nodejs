@@ -1,11 +1,11 @@
-import express, { type Request } from "express"
+import express, { type NextFunction, type Request } from "express"
 
 import { validate } from "../middlewares/validate.js"
 import { RestaurantSchema, type Restaurant } from "../schema/restaurants.js"
 import { initializeRedisClient } from "../utils/client.js"
 import { nanoid } from "nanoid"
 import { restaurantKeyById, reviewDetailsKeyById, reviewKeyById } from "../utils/keys.js"
-import { successResponse } from "../utils/responses.js"
+import { errorResponse, successResponse } from "../utils/responses.js"
 import { checkRestaurantExists } from "../middlewares/checkRestaurantId.js"
 import { ReviewSchema, type Review } from "../schema/review.js"
 
@@ -65,6 +65,45 @@ routes.get("/:restaurantId", [checkRestaurantExists], async (req: Request<{ rest
 
         console.log(viewCount)
         successResponse({ res: res, data: restaurant })
+    } catch (error) {
+        next(error)
+    }
+})
+
+routes.get("/:restaurantId/reviews", [checkRestaurantExists], async (req: Request<{ restaurantId: string }>, res: any, next: any) => {
+    const { restaurantId } = req.params
+    const { page = 1, limit = 10 } = req.query
+    const start = (Number(page) - 1) * Number(limit)
+    const end = start + Number(limit) - 1
+
+    try {
+        const client = await initializeRedisClient()
+        const reviewKey = reviewKeyById(restaurantId)
+        const reviewIds = await client.lRange(reviewKey, start, end)
+        const reviews = await Promise.all(reviewIds.map(id => client.hGetAll(reviewDetailsKeyById(id))))
+        
+        successResponse({ res: res, data: reviews })
+    } catch (error) {
+        next(error)
+    }
+})
+
+routes.delete("/:restaurantId/reviews/:reviewId", [checkRestaurantExists], async (req: Request<{ restaurantId: string, reviewId: string }>, res: any, next: any) => {
+    const { restaurantId, reviewId } = req.params
+    try {
+        const client = await initializeRedisClient()
+        const reviewKey = reviewKeyById(restaurantId)
+        const reviewDetailsKey = reviewDetailsKeyById(reviewId)
+        const [removeResult, deleteResult] = await Promise.all([
+            client.lRem(reviewKey, 0, reviewId),
+            client.del(reviewDetailsKey)
+        ])
+
+        if ( removeResult === 0 && deleteResult === 0 ) {
+            errorResponse({ res: res, status: 404, error: "Review not found" })
+        } else {
+            successResponse({ res: res, data: reviewId, message: "Review deleted" })
+        }
     } catch (error) {
         next(error)
     }
